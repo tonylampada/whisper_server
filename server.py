@@ -18,7 +18,7 @@ from faster_whisper import WhisperModel
 
 # Global model (loaded once)
 model: WhisperModel | None = None
-MODEL_NAME = "base"
+MODEL_NAME = "large-v3"
 
 
 def get_model() -> WhisperModel:
