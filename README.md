@@ -69,12 +69,11 @@ Open http://localhost:8878 in a browser to access the interactive test page with
 
 ## Configuration
 
-The server uses the `base` Whisper model by default. Edit `MODEL_NAME` in `server.py` to change:
-- `tiny` - Fastest, lowest accuracy
-- `base` - Good balance (default)
-- `small` - Better accuracy
-- `medium` - High accuracy
-- `large-v3` - Best accuracy, slowest
+The server uses `large-v3-turbo` on the GPU (float16) by default, falling back to CPU int8 when
+no GPU is reachable. See `bench/RESULTS.md` for why. Override with environment variables:
+
+- `WHISPER_MODEL` - `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo`
+- `WHISPER_DEVICE=cpu` - force the CPU path
 
 ## Supported Formats
 

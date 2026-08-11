@@ -6,6 +6,7 @@ Whisper transcription HTTP server.
 - GET / - Test page with microphone recording
 """
 
+import os
 import tempfile
 import asyncio
 from pathlib import Path
@@ -13,20 +14,41 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+
+import cuda_libs  # noqa: F401  (must precede faster_whisper: preloads libcublas/libcudnn)
 from faster_whisper import WhisperModel
 
 
 # Global model (loaded once)
 model: WhisperModel | None = None
-MODEL_NAME = "large-v3"
+
+# large-v3-turbo on the GPU: fastest configuration measured that still gets the
+# Portuguese right (bench/RESULTS.md). It beats large-v3 on accuracy too, because
+# large-v3 drops whole phrases on longer clips.
+MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
+
+
+def pick_device() -> tuple[str, str]:
+    """Return (device, compute_type): the GPU if CTranslate2 can reach it."""
+    if os.environ.get("WHISPER_DEVICE") == "cpu":
+        return "cpu", "int8"
+    try:
+        import ctranslate2
+
+        if ctranslate2.get_cuda_device_count() > 0 and cuda_libs.preload():
+            return "cuda", "float16"
+    except Exception:
+        pass
+    return "cpu", "int8"
 
 
 def get_model() -> WhisperModel:
     """Get or load the Whisper model."""
     global model
     if model is None:
-        print(f"Loading Whisper model '{MODEL_NAME}'...")
-        model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
+        device, compute_type = pick_device()
+        print(f"Loading Whisper model '{MODEL_NAME}' on {device}/{compute_type}...")
+        model = WhisperModel(MODEL_NAME, device=device, compute_type=compute_type)
         print("Model loaded!")
     return model
 
@@ -346,9 +368,10 @@ async def test_page():
                         const data = JSON.parse(e.data);
                         if (data.error) {
                             result.innerHTML += `\n<span style="color: #ff4757;">Error: ${data.error}</span>`;
-                        } else if (data.text) {
-                            const prev = result.textContent.replace('Connected. Speak now...', '').trim();
-                            result.textContent = prev ? prev + ' ' + data.text : data.text;
+                        } else {
+                            // Server sends the transcript of everything so far,
+                            // not just the newest chunk, so replace rather than append.
+                            result.textContent = data.text;
                         }
                     };
                     
@@ -431,38 +454,53 @@ async def transcribe(
 async def websocket_transcribe(websocket: WebSocket):
     """
     Streaming transcription via WebSocket.
-    
-    Client sends audio chunks (binary), server responds with transcriptions (JSON).
-    Each chunk is transcribed independently and the result is sent back.
+
+    Client sends audio chunks (binary), server replies with the transcript of
+    everything sent so far, so partial text arrives while the speaker is still
+    talking. Send the text frame "reset" to drop the buffer and start a new
+    utterance.
+
+    Chunks are accumulated rather than transcribed one by one: MediaRecorder
+    emits the container header only in its first chunk, so every later chunk on
+    its own is undecodable audio. Appending them back onto the header is what
+    makes them playable again.
     """
     await websocket.accept()
-    
+    buffer = bytearray()
+
     try:
         while True:
-            # Receive audio chunk
-            data = await websocket.receive_bytes()
-            
-            # Save to temp file
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            if message.get("text") == "reset":
+                buffer.clear()
+                await websocket.send_json({"text": "", "reset": True})
+                continue
+            data = message.get("bytes")
+            if not data:
+                continue
+
+            buffer.extend(data)
+
             with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
-                tmp.write(data)
+                tmp.write(buffer)
                 tmp_path = Path(tmp.name)
-            
+
             try:
-                # Transcribe the chunk
                 result = await asyncio.get_event_loop().run_in_executor(
                     None, transcribe_audio, tmp_path, None
                 )
-                
-                # Send back result (only text and language for streaming)
                 await websocket.send_json({
                     "text": result["text"],
-                    "language": result["language"]
+                    "language": result["language"],
+                    "partial": True,
                 })
             except Exception as e:
                 await websocket.send_json({"error": str(e)})
             finally:
                 tmp_path.unlink(missing_ok=True)
-                
+
     except WebSocketDisconnect:
         pass
 

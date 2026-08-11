@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Benchmark artifacts
+bench/clips/
+bench/results.jsonl
+bench/scored.jsonl
