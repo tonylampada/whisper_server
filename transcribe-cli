@@ -1,0 +1,69 @@
+#!/bin/bash
+# transcribe-cli - Wrapper para transcrição via whisper-server
+# Usage: transcribe-cli <arquivo> [--language pt|en|auto]
+
+set -e
+
+WHISPER_URL="http://localhost:8878"
+
+if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "Usage: transcribe-cli <audio/video file> [options]"
+    echo ""
+    echo "Options:"
+    echo "  --language LANG    Language code (pt, en, auto). Default: auto"
+    echo ""
+    echo "Examples:"
+    echo "  transcribe-cli audio.wav"
+    echo "  transcribe-cli video.mp4 --language pt"
+    echo ""
+    echo "Service: $WHISPER_URL (whisper-server)"
+    exit 0
+fi
+
+FILE="$1"
+shift
+
+# Parse optional language
+LANGUAGE=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --language|-l)
+            LANGUAGE="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# Check if file exists
+if [[ ! -f "$FILE" ]]; then
+    echo "Error: File not found: $FILE" >&2
+    exit 1
+fi
+
+# Check if service is running
+if ! curl -s --max-time 2 "$WHISPER_URL/health" > /dev/null 2>&1; then
+    echo "Error: whisper-server not running at $WHISPER_URL" >&2
+    echo "Start with: services start whisper-server" >&2
+    exit 1
+fi
+
+# Build curl command
+CURL_ARGS=(-s -X POST "$WHISPER_URL/transcribe" -F "file=@$FILE")
+if [[ -n "$LANGUAGE" ]]; then
+    CURL_ARGS+=(-F "language=$LANGUAGE")
+fi
+
+# Call service and extract text
+RESPONSE=$(curl "${CURL_ARGS[@]}")
+
+# Check for error
+if echo "$RESPONSE" | jq -e '.detail' > /dev/null 2>&1; then
+    echo "Error: $(echo "$RESPONSE" | jq -r '.detail[0].msg')" >&2
+    exit 1
+fi
+
+# Output text
+echo "$RESPONSE" | jq -r '.text'
