@@ -527,6 +527,27 @@ async def health():
     return {"status": "ok", "model": MODEL_NAME}
 
 
-if __name__ == "__main__":
+def bind_address() -> tuple[str, int]:
+    """(host, port) from WHISPER_HOST / WHISPER_PORT; loopback:8878 by default.
+
+    There is no authentication, so the network boundary is the auth boundary:
+    a specific address (loopback, a tailnet IP) is fine, every interface is not.
+    """
+    host = os.environ.get("WHISPER_HOST", "127.0.0.1").strip()
+    if host in ("0.0.0.0", "::", ""):
+        raise SystemExit(
+            f"refusing WHISPER_HOST={host!r}: the server has no auth. "
+            "Bind a specific address (127.0.0.1, or this box's tailnet IP)."
+        )
+    return host, int(os.environ.get("WHISPER_PORT", "8878"))
+
+
+def run():
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8878)
+
+    host, port = bind_address()
+    uvicorn.run(app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    run()
