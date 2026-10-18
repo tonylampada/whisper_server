@@ -42,3 +42,40 @@ def test_websocket_accumulates_chunks(monkeypatch):
         assert ws.receive_json()["text"] == "len=3"
 
     assert seen[1].startswith(b"HEADER")
+
+
+def test_transcribe_passes_prompt_and_hotwords(monkeypatch):
+    """The optional bias fields reach the model; absent, they arrive as None."""
+    calls = []
+
+    def fake_transcribe(path, language=None, prompt=None, hotwords=None):
+        calls.append((language, prompt, hotwords))
+        return {"text": "ok", "language": "pt", "segments": []}
+
+    monkeypatch.setattr(server, "transcribe_audio", fake_transcribe)
+    client = TestClient(server.app)
+    files = {"file": ("a.wav", b"RIFF", "audio/wav")}
+    r = client.post("/transcribe", files=files, data={"language": "pt", "prompt": "Câmbio.", "hotwords": "câmbio"})
+    assert r.json()["text"] == "ok"
+    r = client.post("/transcribe", files=files, data={"language": "pt"})
+    assert calls == [("pt", "Câmbio.", "câmbio"), ("pt", None, None)]
+
+
+def test_transcribe_audio_forwards_bias_to_whisper(monkeypatch):
+    """Empty strings are no bias at all: None, not an empty prompt."""
+    seen = {}
+
+    class Info:
+        language = "pt"
+        language_probability = 1.0
+
+    class FakeModel:
+        def transcribe(self, path, **kw):
+            seen.update(kw)
+            return iter(()), Info()
+
+    monkeypatch.setattr(server, "get_model", lambda: FakeModel())
+    server.transcribe_audio(server.Path("x.wav"), "pt", "Câmbio.", "câmbio")
+    assert (seen["initial_prompt"], seen["hotwords"]) == ("Câmbio.", "câmbio")
+    server.transcribe_audio(server.Path("x.wav"), "pt", "", "")
+    assert (seen["initial_prompt"], seen["hotwords"]) == (None, None)

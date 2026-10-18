@@ -68,18 +68,30 @@ app = FastAPI(
 )
 
 
-def transcribe_audio(audio_path: Path, language: str | None = None) -> dict:
+def transcribe_audio(
+    audio_path: Path,
+    language: str | None = None,
+    prompt: str | None = None,
+    hotwords: str | None = None,
+) -> dict:
     """
     Transcribe audio file and return result dict.
+
+    prompt (Whisper's initial_prompt) and hotwords both bias the decoder toward
+    words the caller expects: a call client that ends turns on a spoken keyword
+    passes it here so a short, mumbled "câmbio" is heard as that word. Empty or
+    absent, they change nothing.
     """
     whisper = get_model()
-    
+
     segments, info = whisper.transcribe(
         str(audio_path),
         language=language,
         beam_size=5,
         vad_filter=True,
-        vad_parameters=dict(min_silence_duration_ms=500)
+        vad_parameters=dict(min_silence_duration_ms=500),
+        initial_prompt=(prompt or None),
+        hotwords=(hotwords or None),
     )
     
     # Collect segments
@@ -421,13 +433,17 @@ async def test_page():
 @app.post("/transcribe")
 async def transcribe(
     file: UploadFile = File(...),
-    language: str | None = Form(None)
+    language: str | None = Form(None),
+    prompt: str | None = Form(None),
+    hotwords: str | None = Form(None),
 ):
     """
     Transcribe uploaded audio/video file.
     
     - **file**: Audio or video file (wav, mp3, webm, mp4, etc.)
     - **language**: Optional language code (en, pt, es, fr, de). Auto-detects if not provided.
+    - **prompt**: Optional initial prompt (text the audio is likely to follow or contain).
+    - **hotwords**: Optional words to bias recognition toward (e.g. a spoken keyword).
     
     Returns transcription text, detected language, and segment timings.
     """
@@ -441,7 +457,7 @@ async def transcribe(
     try:
         # Run transcription in thread pool to avoid blocking
         result = await asyncio.get_event_loop().run_in_executor(
-            None, transcribe_audio, tmp_path, language
+            None, transcribe_audio, tmp_path, language, prompt, hotwords
         )
         return result
     except Exception as e:
