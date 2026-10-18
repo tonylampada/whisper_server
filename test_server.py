@@ -79,3 +79,17 @@ def test_transcribe_audio_forwards_bias_to_whisper(monkeypatch):
     assert (seen["initial_prompt"], seen["hotwords"]) == ("Câmbio.", "câmbio")
     server.transcribe_audio(server.Path("x.wav"), "pt", "", "")
     assert (seen["initial_prompt"], seen["hotwords"]) == (None, None)
+
+
+def test_bind_address_defaults_to_loopback(monkeypatch):
+    monkeypatch.delenv("WHISPER_HOST", raising=False)
+    monkeypatch.delenv("WHISPER_PORT", raising=False)
+    assert server.bind_address() == ("127.0.0.1", 8878)
+
+
+def test_bind_address_refuses_every_interface(monkeypatch):
+    import pytest
+
+    monkeypatch.setenv("WHISPER_HOST", "0.0.0.0")
+    with pytest.raises(SystemExit):
+        server.bind_address()

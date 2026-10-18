@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Entry point for whisper-server."""
-from server import app
-import uvicorn
+from server import run
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8878)
+    run()

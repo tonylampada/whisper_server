@@ -13,3 +13,6 @@ wheels/
 bench/clips/
 bench/results.jsonl
 bench/scored.jsonl
+
+# Local deploy helper with a credential in it — never commit
+setup-nginx.sh
